@@ -1,0 +1,131 @@
+elif order.payment_method == 'esewa':
+                return redirect(reverse("esewaform") + "?o_id=" + str(order.id) + "&c_id=" + str(cart.id))
+
+import hmac
+import hashlib
+import base64
+import uuid
+
+class Esewaverify(View):
+    def get(self, request, *args, **kwargs):
+        o_id = request.GET.get('o_id')
+        c_id = request.GET.get('c_id')
+        cart = Cart.objects.get(id=c_id)
+        order = get_object_or_404(Order, id=o_id)
+        uuid_val = uuid.uuid4()
+
+
+        def genSha256(key, message):
+            key = key.encode('utf-8')
+            message = message.encode('utf-8')
+            hmac_sha256 = hmac.new(key, message, hashlib.sha256)
+            digest = hmac_sha256.digest()
+            signature = base64.b64encode(digest).decode('utf-8')
+            return signature
+
+        secret_key = "8gBm/:&EnhH.1/q"
+        data_to_sign = f"total_amount={order.total_price},transaction_uuid={uuid_val},product_code=EPAYTEST"
+        
+        result = genSha256(secret_key, data_to_sign)
+        data = {
+            'amount': order.product.price,
+            "total_price": order.total_price,
+            "transaction_uuid": uuid_val,
+            "product_code": "EPAYTEST",
+            "signature": result
+        }
+
+        context = {
+            'order': order,
+            'data': data,
+            'cart': cart
+          
+        }
+        return render(request, 'esewa.html', context)
+
+
+import json
+
+@login_required
+def esewaverify(request, order_id, cart_id):
+    if request.method == "GET":
+        data = request.GET.get('data') 
+        decoded_data = base64.b64decode(data).decode('utf-8')
+        map_data = json.loads(decoded_data)
+        order = Order.objects.get(id=order_id)
+        cart = Cart.objects.get(id=cart_id)
+
+        if map_data.get('status') == 'COMPLETE':
+            # Update order payment status
+            order.payment_status = True
+            order.save()
+            cart.delete()
+           
+
+           # Ensure this line is reached
+      
+
+            messages.add_message(request, messages.SUCCESS, 'Payment successful. Cart deleted.')
+            return redirect('/myorder')
+        else:
+            messages.add_message(request, messages.ERROR, 'Payment failed.')
+            return redirect('/myorder')
+
+
+urls.py
+----------
+path('esewa-form',Esewaverify.as_view(),name='esewaform'),
+    path('esewaverify/<int:order_id>/<int:cart_id>',esewaverify),
+
+
+esewa.html
+-------------
+
+<div class="container">
+  <div class="row d-flexjustify-content-center">
+    <div class="container">
+      <div class="row d-flex justify-content-center">
+        <div class="col-md-6">
+          <h1 class="text-center">
+            You are being redirected to eSewa, please wait...
+          </h1>
+          <div style="display: none">
+
+            <form action="https://rc-epay.esewa.com.np/api/epay/main/v2/form" method="post" id="esewa_form">
+              <input type="text" id="amount" name="amount" value="{{ data.amount }}" required />
+              <input type="text" id="tax_amount" name="tax_amount" value="0" required />
+              <input type="text" id="total_amount" name="total_amount" value="{{ data.total_price }}" required />
+              <input type="text" id="transaction_uuid" name="transaction_uuid" value="{{ data.transaction_uuid }}"
+                required />
+              <input type="text" id="product_code" name="product_code" value="EPAYTEST" required />
+              <input type="text" id="product_service_charge" name="product_service_charge" value="0" required />
+              <input type="text" id="product_delivery_charge" name="product_delivery_charge" value="0" required />
+
+              <!-- Ensure the success_url correctly points to the esewaverify endpoint with appropriate order and cart IDs -->
+              <input type="text" id="success_url" name="success_url"
+                value="http://127.0.0.1:8000/esewaverify/{{ order.id }}/{{cart.id}}" required />
+
+              <!-- Ensure failure_url points to an appropriate failure handling page -->
+              <input type="text" id="failure_url" name="failure_url" value="http://127.0.0.1:8000/"
+                required />
+              <!-- Ensure signed_field_names match the fields that need to be signed for security -->
+              <input type="text" id="signed_field_names" name="signed_field_names"
+                value="total_amount,transaction_uuid,product_code" required />
+
+              <!-- The signature should be correctly generated using eSewa’s signing method -->
+              <input type="text" id="signature" name="signature" value="{{ data.signature }}" required />
+
+              <input type="submit" value="Submit" />
+            </form>
+
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<script>
+  setTimeout(function () {
+    document.getElementById('esewa_form').submit()
+  }, 2000)  
+</script>
